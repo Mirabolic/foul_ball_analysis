@@ -10,8 +10,9 @@ The software development and statistical analyses were performed during 2019-202
   * [Processing Details](#processing-details)
      * [Provide the Raw Data](#provide-the-raw-data)
      * [Specify the Teams](#specify-the-teams)
-     * [Scrape the Data](#scrape-the-data)
+     * [Scrape the Web and Analyze the Data](#scrape-the-web-and-analyze-the-data)
      * [Results](#results)
+  * [Data Files](#data-files)
   * [Future Extensions](#future-extensions)
 
 ## Installation
@@ -83,7 +84,7 @@ Note that if the data from a single team is spread across multiple Excel workshe
 
 In case of ambiguity, we provide a hypothetical `sample_teams.csv`, using some MLB teams that have been defunct for the past century as examples.
 
-### Scrape the Data
+### Scrape the Web and Analyze the Data
 
 Now that you have provided the two files above (`data/teams.csv` and, for example, `raw_medical.xlsx`), the rest of the process is automated.  Run
 ```
@@ -103,6 +104,28 @@ A set of human-readable summaries are written to `data/results.txt`.  The output
 
 Graphs and figures are written to `pix/` as `PNG` files.
 
+## Data Files
+
+The processing produces a number of intermediate files in `data/`.  In case you are interested in further analysis, it can be helpful to understand a little more about these files.  We describe the files in the order in which they are created (i.e., the later files are functions of the earlier files.)
+
+* `raw_medical.xlsx`: This file (or `something_else.xlsx` depending on how you've named it) is an Excel file containing medical data provided by you.
+* `teams.csv`: This file is also provided by you and summarizes which worksheets in the Excel file to analyze.
+    * `team, team_full_name, excel_sheet_name, anonymized_name, event_type`
+* `extracted_raw.csv`: This data from the selected worksheets within `raw_medical.xlsx` is extracted into this file and slightly cleaned.  E.g., empty rows or rows lacking a date or attendance are discarded; the fields from `teams.csv` are joined in.  Each row corresponds to one medical event, so there are typically multiple rows for the same game.  This data may contain non-MLB game data (e.g., there may be medical records from a minor league game played in the same stadium) and will probably be missing data from some of the actual MLB games.  Note: this contains double-headers.
+    * `Date, Age, Gender, Mechanism, Primary Dx, epoch_second, year, month, day, team, team_full_name, excel_sheet_name, anonymized_name, event_type`
+* `*.shtml`: These are the download webpages containing MLB baseball statistics.
+* `basic_MLB_stats.csv`: We scrape the web pages (the `*.shtml` above) to extract basic information about MLB games, like date, attendance, length, etc.  There is one row per game; a double-header shows up as two rows (one for each game in the double-header).
+    * `Year, Date, Team, Home_game, Opposing_team, Win_loss_tie, Runs_scored_allowed, Runs_allowed, Innings, Win_loss_record_after_game, Rank, Games_back, Win, Loss, Save, Time, Daytime, Attendance, cLI, Streak, Orig_Scheduled, walkoff, epoch_second, double_header, double_header_game_count, game_length_minutes, day_of_week, fraction_of_season`
+* `merged.csv`: We merge (a.k.a., "join" or "intersect") the MLB data (from `basic_MLB_stats.csv`) and the medical data (from `extracted_raw.csv`).  **Note: No double-headers.**
+    * `Year, Team, Win_loss_tie, Innings, Daytime, Attendance, epoch_second, game_length_minutes, fraction_of_season, Date, foul_ball_injuries, non_foul_ball_injuries`
+* `pure_med_stats.csv`: As mentioned above, `extracted_raw.csv` may contain data from non-MLB events, which can be detected because the medical events do not occur on the date of a MLB game at that stadium.  Restricting to the actual MLB dates produces this file, i.e., `pure_med_stats.csv` is the MLB subset of `extracted_raw.csv`.  We also added in FB and non-FB injury counts for good measure.  **Note: No double-headers.**
+    * `Date, Age, Gender, Mechanism, Primary Dx, epoch_second, year, month, day, team, team_full_name, excel_sheet_name, anonymized_name, event_type, foul_ball_injuries, non_foul_ball_injuries`
+* `neg_binom.csv`: To understand how much data is being hidden from us, we need to estimate the number of games with no medical events.  We do this by fitting a negative binomial distribution through maximum likelihood; this file records the optimal parameters (`r` and `p`) discovered.
+    * `Team, r, p`
+* `missing_game_estimates.csv`: A MLB game is "present" if we observe at least one medical event during the game, otherwise it is "missing".  We record the numbers per year per team.  **Note: No double-headers,** i.e., we are estimating the number of missing games amongst the single-headers.
+    * `Team, Year, missing_games, present_games`
+* `missing_summary.csv`: Combining the missing game counts and the estimates derived from the fitted negative binomial model, we can compute a corrected game and attendance count; these are better estimates to use when estimating the foul ball risk per game or per 10K attendees.  **Note: No double-headers,** i.e., we are estimating the number of missing games amongst the single-headers.
+    * `Team, missing_games, present_games, present_attendance, corrected_games, corrected_attendance, first_year, last_year, event_type`
 
 ## Future Extensions
 
