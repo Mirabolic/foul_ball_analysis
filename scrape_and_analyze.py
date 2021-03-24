@@ -796,7 +796,7 @@ def summarize_data():
         lprint('   Gender: M=%.1f%%  F=%.1f%%          N=%d' % (
             (100.0 * np.sum(pure_fb_df.Gender.values == 'M') /
              len(pure_fb_df)),
-            (100.0 * np.sum(pure_med_team_df.Gender.values == 'F') /
+            (100.0 * np.sum(pure_fb_df.Gender.values == 'F') /
              len(pure_fb_df)),
             len(pure_fb_df)))
 
