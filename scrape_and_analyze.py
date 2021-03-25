@@ -45,7 +45,7 @@ def lprint(x, suppress_stdout=False):
     global results_fp
     if results_fp is None:
         results_fp = open(results_file_name, 'w')
-        results_fp.write(str(datetime.datetime.now()))
+        results_fp.write(str(datetime.datetime.now())+'\n')
     results_fp.write('%s\n' % x)
 
 
