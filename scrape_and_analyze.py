@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-# Scripts for web scraping, data ingest and data cleaning.
+# Main script for foul ball risk analysis.  Performs web scraping, data ingest
+# data cleaning, summarization and statistical analyses.
 
 import warnings
 from bs4 import BeautifulSoup
@@ -29,6 +30,7 @@ missing_game_file_name = os.path.join(data_dir, 'missing_game_estimates.csv')
 missing_summary_file_name = os.path.join(data_dir, 'missing_summary.csv')
 neg_binom_params_file_name = os.path.join(data_dir, 'neg_binom.csv')
 pure_med_file_name = os.path.join(data_dir, 'pure_med_stats.csv')
+injuries_file_name = os.path.join(data_dir, 'injuries.csv')
 
 
 #####################
@@ -120,9 +122,17 @@ def parse_raw_excel(args):
             raise ValueError('Excel sheet %f is empty!' % row.excel_sheet_name)
         assert len(accidents_df) > 0
 
-        core_columns = ['Date', 'Age', 'Gender', 'Mechanism', 'Primary Dx']
+        core_columns = [
+            'Date', 'Age', 'Gender', 'Mechanism', 'Meds + Rxs', 'Primary Dx',
+            'Inj body part', 'Abnormal vitals?', 'Treatment', 'Disposition']
         # Restrict to columns of interest
         accidents_df = accidents_df[core_columns]
+        # Saner column names
+        accidents_df.rename(columns={
+            'Primary Dx': 'Diagnosis',
+            'Inj body part': 'Location of Injury',
+            'Abnormal vitals?': 'Vital Signs',
+        }, inplace=True)
         # If all data is missing, we should certainly skip the row!
         accidents_df.dropna(axis='index', how='all', inplace=True)
         # If crucial columns are missing, we also need to drop row
@@ -821,6 +831,109 @@ def summarize_data():
         lprint('   r=%.6f   p=%.6f' %
                (neg_binom_df.r[team], neg_binom_df.p[team]))
     lprint('\n')
+
+    # Next, extract the distribution of characteristics about the injuries.
+    # E.g., 69% of FB injuries involve contusions, but only 6% of injuries
+    # in general do.
+    #
+    # We use this information to construct Table #3 in the paper.
+    #
+    # Vital signs
+    # Diagnosis
+    # Location of Injury
+    # Treatments
+    # Level of Care
+    # Disposition
+
+    C = {}
+    # "category_list" is used *after* we have renamed some of the columns
+    # (like 'Meds + Rxs').
+    category_list = ['Vital Signs', 'Diagnosis', 'Location of Injury',
+                     'Treatment', 'Level of Care', 'Disposition']
+    for team in df_key.index.unique():
+        C[team] = {}
+        for p in ['FB', 'Traumatic']:
+            C[team][p] = {}
+            if p == 'FB':
+                index = (
+                    (pure_med_df.team.values == team) &
+                    (pure_med_df.foul_ball_injuries.values > 0)
+                )
+            elif p == 'Traumatic':
+                trauma_list = [
+                    'assault', 'environmental', 'other injury', 'trip/fall',
+                    'contusion']  # Andrew doesn't have "contusion" ?
+                index = (
+                    (pure_med_df.team.values == team) &
+                    (pure_med_df.foul_ball_injuries.values == 0) &
+                    (pure_med_df.Mechanism.isin(trauma_list))
+                )
+            else:
+                raise ValueError('Unknown patient group %s' % p)
+            df = pure_med_df[index].reset_index(drop=True).copy()
+
+            df.rename(columns={'Treatment': 'Level of Care'}, inplace=True)
+            df.rename(columns={'Meds + Rxs': 'Treatment'}, inplace=True)
+
+            # Broadly standardize
+
+            for c in category_list:
+                df[c] = df[c].str.lower()
+                df[c].fillna('not listed', inplace=True)
+
+            relabel = {}
+            relabel['Vital Signs'] = [
+                ('no', 'Abnormal'), ('yes', 'Normal'),
+                ('not listed', 'Not listed')]
+
+            for c in relabel:
+                for a, v in relabel[c]:
+                    df[c].values[df[c].values == a] = v
+
+            for c in category_list:
+                C[team][p][c] = {}
+                for v in df[c].unique():
+                    C[team][p][c][v] = np.sum(
+                        df[c].values == v)
+
+    columns = ['Category', 'Type']
+    for team in df_key.index.unique():
+        for p in ['FB', 'Traumatic']:
+            cc = '%s %s' % (p, df_key['anonymized_name'][team])
+            cc_perc = '%s %%' % cc
+            columns.append(cc_perc)
+    for team in df_key.index.unique():
+        for p in ['FB', 'Traumatic']:
+            cc = '%s %s' % (p, df_key['anonymized_name'][team])
+            cc_count = '%s count' % cc
+            columns.append(cc_count)
+
+    injuries_df = pd.DataFrame(columns=columns)
+    for c in category_list:
+        # Figure out full set of possible types
+        full_set = set()
+        for team in C:
+            for p in C[team]:
+                full_set = full_set.union(set(C[team][p][c].keys()))
+        full_list = sorted(full_set)
+
+        for v in full_list:
+            row = len(injuries_df)
+            injuries_df.loc[row, 'Category'] = c
+            injuries_df.loc[row, 'Type'] = v
+            for team in df_key.index.unique():
+                for p in ['FB', 'Traumatic']:
+                    cc = '%s %s' % (p, df_key['anonymized_name'][team])
+                    cc_count = '%s count' % cc
+                    cc_perc = '%s %%' % cc
+                    x = C[team][p][c].get(v, 0)
+                    injuries_df.loc[row, cc_count] = x
+                    N = sum(C[team][p][c].values())
+                    injuries_df.loc[row, cc_perc] = 100.0 * x / N
+
+    with pd.option_context('display.float_format', '{:0.2f}'.format):
+        lprint(injuries_df.to_string())
+    injuries_df.to_csv(injuries_file_name, index=False)
 
 
 if __name__ == '__main__':
