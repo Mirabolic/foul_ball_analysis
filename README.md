@@ -127,6 +127,17 @@ The processing produces a number of intermediate files in `data/`.  In case you 
 * `missing_summary.csv`: Combining the missing game counts and the estimates derived from the fitted negative binomial model, we can compute a corrected game and attendance count; these are better estimates to use when estimating the foul ball risk per game or per 10K attendees.  **Note: No double-headers,** i.e., we are estimating the number of missing games amongst the single-headers.
     * `Team, missing_games, present_games, present_attendance, corrected_games, corrected_attendance, first_year, last_year, event_type`
 
+## Other Teams
+
+It can sometimes be helpful to extract summary baseball statistics (like dates and attendance counts) for home games for other MLB teams.  We have a small helper script to do that.  For example, suppose that the three letter acronym (per https://en.wikipedia.org/wiki/Wikipedia:WikiProject_Baseball/Team_abbreviations) for your team of interest is `XYZ`.  Then you could run:
+```
+grab_single_team_data.py --team XYZ --first_year 2005 --last_year 2012
+```
+The matching information about MLB home games for team XYZ between 2005 and 2012 (inclusive) would be written to:
+```
+data/basic_MLB_stats_XYZ_2005_2012.csv
+```
+
 ## Future Extensions
 
 This code is translated from a more fully-featured private repository.  (Because of the desire to anonymize the MLB teams, we cannot us tha code directly, but needed to rewrite it for this public repository.)

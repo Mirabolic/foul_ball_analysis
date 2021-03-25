@@ -175,156 +175,167 @@ def grab_basic_game_stats():
     # Figure out which teams and time ranges we need
     extracted_df = pd.read_csv(extracted_file_name)
     combined_df = pd.DataFrame()
-    MLB_columns = []
+
     for team, team_df in extracted_df.groupby('team'):
         first_year = int(team_df.year.min())
         last_year = int(team_df.year.max())
-        print('Downloading basic stats for %s for years %d-%d' % (
-            team, first_year, last_year))
-
-        for year in range(first_year, last_year+1):
-            out_filename = os.path.join(data_dir, '%s_%d.shtml' % (team, year))
-            if not os.path.exists(out_filename):
-                cmd = 'curl -o %s https://www.baseball-reference.com/teams/%s/%d-schedule-scores.shtml' % (  # noqa
-                    out_filename, team, year)
-                subprocess.call(cmd, shell=True)
-
-        output_rows = []
-        for year in range(first_year, last_year+1):
-
-            html = open('data/%s_%d.shtml' % (team, year)).read()
-            soup = BeautifulSoup(html, 'html.parser')
-            table = soup.find("table")
-
-            # Figure out data fields on first pass through.
-            # Note that the website may change these fields,
-            # so we need to be somewhat paranoid about handling them.
-            if MLB_columns == []:
-                for table_header in table.findAll('thead'):
-                    for t in table_header.findAll('th'):
-                        MLB_columns.append(t.string)
-
-                # As of March 2021, this reads:
-                # Gm#, Date, None, Tm, \xa0, Opp, W/L, R, RA, Inn, W-L,
-                # Rank, GB, Win, Loss, Save, Time, D/N, Attendance, cLI,
-                # Streak, Orig. Scheduled
-                #  (Note that "None" is the Python None, not the string
-                #   "None".)
-
-                # Need to overwrite some weirdnesses.  Hope that the
-                # ordering of these fields doesn't change.
-                MLB_columns[0] = 'Year'  # Weird, but correct
-                MLB_columns[2] = 'Boxscore'
-                MLB_columns[4] = 'Home_game'
-
-                # Relabel with saner names when possible
-                relabels = {
-                    'Tm': 'Team', 'Opp': 'Opposing_team',
-                    'W/L': 'Win_loss_tie',
-                    'R': 'Runs_scored_allowed', 'RA': 'Runs_allowed',
-                    'Inn': 'Innings', 'W-L': 'Win_loss_record_after_game',
-                    'GB': 'Games_back', 'DN': 'Daytime', 'D/N': 'Daytime',
-                    'CLI': 'Championship_Leverage_Index',
-                    'Orig. Scheduled': 'Orig_Scheduled'}
-                MLB_columns = [relabels.get(c, c) for c in MLB_columns]
-
-            # Extract data
-            for table_row in table.findAll('tr'):
-                columns = table_row.findAll('td')
-                output_row = [year]
-                for column in columns:
-                    output_row.append(column.text)
-                if len(output_row) == 1:
-                    continue
-                output_rows.append(output_row)
-
-        df = pd.DataFrame(output_rows, columns=MLB_columns)
-
-        # Represent data in cleaner ways
-        df.Home_game = (df.Home_game.values != '@')
-        df.Innings.values[df.Innings.values == ''] = '9'
-        df.Innings = df.Innings.astype(int)
-
-        # Attendance may have a few missing values.  Check that it's
-        # not out of hand, and drop them.
-        NaN_attendance = np.sum(df.Attendance.isna())
-        if NaN_attendance > 10:
-            raise ValueError(
-                'Suspiciously many null attendance entries! (%d of %d)' %
-                (NaN_attendance, len(df)))
-        df['Attendance'].values[df.Attendance.values == ''] = np.nan
-        df.dropna(axis='index', subset=['Attendance'], inplace=True)
-        df['Attendance'] = df.Attendance.str.replace(',', '')
-        df['Attendance'] = df['Attendance'].astype(int)
-        df.drop(columns=['Boxscore'], axis='columns', inplace=True)
-        df['Daytime'] = (df['Daytime'].values == 'D')
-        df['walkoff'] = False
-        df['epoch_second'] = 0
-        month_to_int = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5,
-                        'Jun': 6, 'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10,
-                        'Nov': 11, 'Dec': 12}
-        df['double_header'] = False
-        df['double_header_game_count'] = 0
-        df['game_length_minutes'] = 0
-        df['day_of_week'] = ''
-        for i in range(len(df)):
-            # Observed values:
-            # ['W', 'L-wo', 'L', 'W-wo', 'L &V']
-            if df['Win_loss_tie'].values[i].endswith('-wo'):
-                df['walkoff'].values[i] = True
-                df['Win_loss_tie'].values[i] = df[
-                    'Win_loss_tie'].values[i][:-3]
-            if df['Win_loss_tie'].values[i].endswith(' &V'):
-                df['Win_loss_tie'].values[i] = df[
-                    'Win_loss_tie'].values[i][:-3]
-
-            hours, minutes = df['Time'].values[i].split(':')
-            df['game_length_minutes'].values[i] = 60 * \
-                int(hours) + int(minutes)
-
-            year = df['Year'].values[i]
-            splitted = df['Date'].values[i].split()
-            if len(splitted) == 3:
-                (_, month, day_of_month) = splitted
-            elif len(splitted) == 4:
-                (_, month, day_of_month, game_count) = splitted
-                assert game_count[0] == '(' and game_count[2] == ')'
-                game_count = int(game_count[1]) - 1
-                df['double_header'].values[i] = True
-                df['double_header_game_count'].values[i] = game_count
-            else:
-                assert False
-
-            month = month_to_int[month]
-            day_of_month = int(day_of_month)
-            dt = datetime.datetime(year=year, month=month, day=day_of_month)
-            epoch_second = int(calendar.timegm(dt.timetuple()))
-            df['epoch_second'].values[i] = epoch_second
-            df['day_of_week'].values[i] = (
-                datetime.datetime.fromtimestamp(epoch_second).strftime("%A"))
-
-        # Restrict to only home games
-        df = df[df['Home_game'].values]
-
-        # Figure out what fraction of the season corresponds to each game.
-        # There are 183 days in a standard season (prior to 2018):
-        starting_day = {}
-        for year in range(first_year, 1+last_year):
-            starting_day[year] = (
-                df[df['Year'].values == year]['epoch_second'].min())
-        df['fraction_of_season'] = 0.0
-        season_length_seconds = 183 * 86400
-        for i in range(len(df)):
-            sd = starting_day[df['Year'].values[i]]
-            frac = 1.0 * (df['epoch_second'].values[i] -
-                          sd) / season_length_seconds
-            frac = min(frac, 1.0)
-            assert frac >= 0.0
-            df['fraction_of_season'].values[i] = frac
-
-        df.reset_index(drop=True, inplace=True)
+        df = grab_one_team_stats(
+            team=team, first_year=first_year, last_year=last_year)
         combined_df = combined_df.append(df, ignore_index=True)
     combined_df.to_csv(mlb_stats_file_name, index=False)
+
+
+def grab_one_team_stats(team=None, first_year=None, last_year=None):
+    print('Downloading basic stats for %s for years %d-%d' % (
+        team, first_year, last_year))
+
+    for year in range(first_year, last_year+1):
+        out_filename = os.path.join(data_dir, '%s_%d.shtml' % (team, year))
+        if not os.path.exists(out_filename):
+            cmd = 'curl -o %s https://www.baseball-reference.com/teams/%s/%d-schedule-scores.shtml' % (  # noqa
+                out_filename, team, year)
+            subprocess.call(cmd, shell=True)
+
+    output_rows = []
+    MLB_columns = []
+    for year in range(first_year, last_year+1):
+
+        html = open('data/%s_%d.shtml' % (team, year)).read()
+        soup = BeautifulSoup(html, 'html.parser')
+        table = soup.find("table")
+
+        # Figure out data fields on first pass through.
+        # Note that the website may change these fields,
+        # so we need to be somewhat paranoid about handling them.
+        if MLB_columns == []:
+            for table_header in table.findAll('thead'):
+                for t in table_header.findAll('th'):
+                    MLB_columns.append(t.string)
+
+            # As of March 2021, this reads:
+            # Gm#, Date, None, Tm, \xa0, Opp, W/L, R, RA, Inn, W-L,
+            # Rank, GB, Win, Loss, Save, Time, D/N, Attendance, cLI,
+            # Streak, Orig. Scheduled
+            #  (Note that "None" is the Python None, not the string
+            #   "None".)
+
+            # Need to overwrite some weirdnesses.  Hope that the
+            # ordering of these fields doesn't change.
+            MLB_columns[0] = 'Year'  # Weird, but correct
+            MLB_columns[2] = 'Boxscore'
+            MLB_columns[4] = 'Home_game'
+
+            # Relabel with saner names when possible
+            relabels = {
+                'Tm': 'Team', 'Opp': 'Opposing_team',
+                'W/L': 'Win_loss_tie',
+                'R': 'Runs_scored_allowed', 'RA': 'Runs_allowed',
+                'Inn': 'Innings', 'W-L': 'Win_loss_record_after_game',
+                'GB': 'Games_back', 'DN': 'Daytime', 'D/N': 'Daytime',
+                'CLI': 'Championship_Leverage_Index',
+                'Orig. Scheduled': 'Orig_Scheduled'}
+            MLB_columns = [relabels.get(c, c) for c in MLB_columns]
+
+        # Extract data
+        for table_row in table.findAll('tr'):
+            columns = table_row.findAll('td')
+            output_row = [year]
+            for column in columns:
+                output_row.append(column.text)
+            if len(output_row) == 1:
+                continue
+            output_rows.append(output_row)
+
+    df = pd.DataFrame(output_rows, columns=MLB_columns)
+
+    # Represent data in cleaner ways
+    df.Home_game = (df.Home_game.values != '@')
+    df.Innings.values[df.Innings.values == ''] = '9'
+    df.Innings = df.Innings.astype(int)
+
+    # Attendance may have a few missing values.  Check that it's
+    # not out of hand, and drop them.
+    NaN_attendance = np.sum(df.Attendance.isna())
+    if NaN_attendance > 10:
+        raise ValueError(
+            'Suspiciously many null attendance entries! (%d of %d)' %
+            (NaN_attendance, len(df)))
+    df['Attendance'].values[df.Attendance.values == ''] = np.nan
+    df.dropna(axis='index', subset=['Attendance'], inplace=True)
+    df['Attendance'] = df.Attendance.str.replace(',', '')
+    df['Attendance'] = df['Attendance'].astype(int)
+    df.drop(columns=['Boxscore'], axis='columns', inplace=True)
+    df['Daytime'] = (df['Daytime'].values == 'D')
+    df['walkoff'] = False
+    df['epoch_second'] = 0
+    month_to_int = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5,
+                    'Jun': 6, 'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10,
+                    'Nov': 11, 'Dec': 12}
+    df['double_header'] = False
+    df['double_header_game_count'] = 0
+    df['game_length_minutes'] = 0
+    df['day_of_week'] = ''
+    for i in range(len(df)):
+        # Observed values:
+        # ['W', 'L-wo', 'L', 'W-wo', 'L &V']
+        if df['Win_loss_tie'].values[i].endswith('-wo'):
+            df['walkoff'].values[i] = True
+            df['Win_loss_tie'].values[i] = df[
+                'Win_loss_tie'].values[i][:-3]
+        if df['Win_loss_tie'].values[i].endswith(' &V'):
+            df['Win_loss_tie'].values[i] = df[
+                'Win_loss_tie'].values[i][:-3]
+
+        hours, minutes = df['Time'].values[i].split(':')
+        df['game_length_minutes'].values[i] = 60 * \
+            int(hours) + int(minutes)
+
+        year = df['Year'].values[i]
+        splitted = df['Date'].values[i].split()
+        if len(splitted) == 3:
+            (_, month, day_of_month) = splitted
+        elif len(splitted) == 4:
+            (_, month, day_of_month, game_count) = splitted
+            assert game_count[0] == '(' and game_count[2] == ')'
+            game_count = int(game_count[1]) - 1
+            df['double_header'].values[i] = True
+            df['double_header_game_count'].values[i] = game_count
+        else:
+            assert False
+
+        month = month_to_int[month]
+        day_of_month = int(day_of_month)
+        dt = datetime.datetime(year=year, month=month, day=day_of_month)
+        epoch_second = int(calendar.timegm(dt.timetuple()))
+        df['epoch_second'].values[i] = epoch_second
+        df['day_of_week'].values[i] = (
+            datetime.datetime.fromtimestamp(epoch_second).strftime("%A"))
+
+    # Restrict to only home games
+    df = df[df['Home_game'].values]
+
+    # Figure out what fraction of the season corresponds to each game.
+    # There are 183 days in a standard season (prior to 2018):
+    starting_day = {}
+    for year in range(first_year, 1+last_year):
+        starting_day[year] = (
+            df[df['Year'].values == year]['epoch_second'].min())
+    df['fraction_of_season'] = 0.0
+    season_length_seconds = 183 * 86400
+    for i in range(len(df)):
+        sd = starting_day[df['Year'].values[i]]
+        frac = 1.0 * (df['epoch_second'].values[i] -
+                      sd) / season_length_seconds
+        frac = min(frac, 1.0)
+        assert frac >= 0.0
+        df['fraction_of_season'].values[i] = frac
+
+    df.reset_index(drop=True, inplace=True)
+    lprint('====  %s  (%d-%d)  ====' % (team, first_year, last_year))
+    lprint('  Total home games: %d' % len(df))
+    lprint('  Total home game attendance: %d' % (df.Attendance.sum()))
+
+    return(df)
 
 
 @prettyprint
@@ -850,10 +861,13 @@ def summarize_data():
     # (like 'Meds + Rxs').
     category_list = ['Vital Signs', 'Diagnosis', 'Location of Injury',
                      'Treatment', 'Level of Care', 'Disposition']
+    total_injury_counts = {}
     for team in df_key.index.unique():
         C[team] = {}
+        total_injury_counts[team] = {}
         for p in ['FB', 'Traumatic']:
             C[team][p] = {}
+
             if p == 'FB':
                 index = (
                     (pure_med_df.team.values == team) &
@@ -871,6 +885,7 @@ def summarize_data():
             else:
                 raise ValueError('Unknown patient group %s' % p)
             df = pure_med_df[index].reset_index(drop=True).copy()
+            total_injury_counts[team][p] = len(df)
 
             df.rename(columns={'Treatment': 'Level of Care'}, inplace=True)
             df.rename(columns={'Meds + Rxs': 'Treatment'}, inplace=True)
@@ -895,6 +910,18 @@ def summarize_data():
                 for v in df[c].unique():
                     C[team][p][c][v] = np.sum(
                         df[c].values == v)
+
+    lprint('Total Injury counts')
+    for team in total_injury_counts:
+        lprint('Team %s' % team)
+        for p in total_injury_counts[team]:
+            lprint('   %s: %d' % (p, total_injury_counts[team][p]))
+        lprint('   all: %s' % (sum(total_injury_counts[team].values())))
+        lprint('   FB fraction: %.2f%%' % (
+            100.0 * total_injury_counts[team]['FB'] /
+            sum(total_injury_counts[team].values())
+        ))
+    lprint('')
 
     columns = ['Category', 'Type']
     for team in df_key.index.unique():
