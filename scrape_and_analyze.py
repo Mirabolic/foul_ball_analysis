@@ -893,23 +893,72 @@ def summarize_data():
             # Broadly standardize
 
             for c in category_list:
-                df[c] = df[c].str.lower()
-                df[c].fillna('not listed', inplace=True)
+                df[c].fillna('Not listed', inplace=True)
+                df[c] = [v.capitalize() for v in df[c].str.lower().values]
 
             relabel = {}
             relabel['Vital Signs'] = [
-                ('no', 'Abnormal'), ('yes', 'Normal'),
-                ('not listed', 'Not listed')]
-
+                ('Yes', 'Abnormal'), ('No', 'Normal')]
+            relabel['Diagnosis'] = [
+                ('Not listed', 'Not listed or none'),
+                ('None', 'Not listed or none')]
+            relabel['Treatment'] = [
+                ('Analgesics (oral, non-narc)', 'Analgesics'),
+                ('Wound care only, band-aid', 'Wound care only'),
+                ('Not listed', 'Not listed or none'),
+                ('None', 'Not listed or none')]
+            relabel['Level of Care'] = [
+                ('Not listed', 'Not listed or none'),
+                ('None', 'Not listed or none'),
+                ('Minor (band-aid + simple analgesic; tampon etc..)', 'Minor')]
+            relabel['Disposition'] = [
+                ('Med attn later (return to event, f/u later)',
+                    'Med attn later'),
+                ('Minor issue (<18 yo, parent refused)',
+                    'Minor issue < 18 yo'),
+                ('Minor issue (<18 yo, parent refused transport)',
+                    'Minor issue < 18 yo'),
+                ('Refused transport; went back to game', 'Refused transport'),
+                ('Refused treatment (>18 yo)', 'Refused treatment'),
+                ('Return to event (no f/u)', 'Return to event'),
+                ('Returned to event by medical staff (no f/u)',
+                    'Return to event')]
             for c in relabel:
                 for a, v in relabel[c]:
                     df[c].values[df[c].values == a] = v
 
+            # Only consider labels within a standard set (which
+            # differs for each field), i.e., toss weirdo outliers.
+            # Default to the full set of labels.
+            valid_labels = {c: set(df[c].unique()) for c in category_list}
+            valid_labels['Vital Signs'] = set(
+                ['Abnormal', 'Normal', 'Not listed'])
+            valid_labels['Treatment'] = set(
+                ['Analgesics', 'Wound care only', 'Not listed or none',
+                 'Refused care'])
+            valid_labels['Diagnosis'] = set(
+                ['Contusion', 'Laceration', 'Head injury',
+                 'Sprain, strain (soft-tissue)', 'Blister wound',
+                 'Heat exhaustion', 'Abrasion', 'Not listed or none',
+                 'Dizzy/lightheaded', 'Syncope', 'Abdominal pain',
+                 'Alcohol related', 'Eye injury'])
+            valid_labels['Disposition'].discard('Detox van transport')
+
+            # If an entry isn't a valid label, we can either drop it
+            # or relabel it.  For the ones we want to relabel:
+            for c in ['Diagnosis', 'Treatment']:
+                index = ~(df[c].isin(valid_labels[c]))
+                v = 'Other'
+                df[c].values[index] = v
+                valid_labels[c].add(v)
+
             for c in category_list:
                 C[team][p][c] = {}
                 for v in df[c].unique():
-                    C[team][p][c][v] = np.sum(
-                        df[c].values == v)
+                    index = df[c].isin(valid_labels[c])
+                    count = np.sum(df[c].values[index] == v)
+                    if count > 0:
+                        C[team][p][c][v] = count
 
     lprint('Total Injury counts')
     for team in total_injury_counts:

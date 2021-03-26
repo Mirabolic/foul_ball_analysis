@@ -26,10 +26,13 @@ if __name__ == '__main__':
     assert args.first_year >= 1876  # First MLB game, in Philadelphia :)
     assert args.first_year <= args.last_year
 
+    suffix = '_%s_%d_%d' % (args.team, args.first_year, args.last_year)
+    scrape_and_analyze.results_file_name = (
+        os.path.join(scrape_and_analyze.data_dir, 'results%s.txt' % suffix))
+
     df = scrape_and_analyze.grab_one_team_stats(
         team=args.team, first_year=args.first_year, last_year=args.last_year)
     file_name = os.path.join(
         scrape_and_analyze.data_dir,
-        'basic_MLB_stats_%s_%d_%d.csv' % (
-            args.team, args.first_year, args.last_year))
+        'basic_MLB_stats_%s.csv' % suffix)
     df.to_csv(file_name, index=False)
