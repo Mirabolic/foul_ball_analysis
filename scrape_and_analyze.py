@@ -891,10 +891,10 @@ def summarize_data():
         lprint('Injury rates (+/- 1 sigma)')
         lprint('   FB patients per game (PPG):     %.4f   +/-%.4f' %
                (PPG, PPG_sigma))
-        lprint('   FB patients / 10K fans (PPTT):  %.4f   +/-%.4f' %
-               (PPTT, PPTT_sigma))
         lprint('   FB transports per game (THG):   %.4f   +/-%.4f' %
                (THG, THG_sigma))
+        lprint('   FB patients / 10K fans (PPTT):  %.4f   +/-%.4f' %
+               (PPTT, PPTT_sigma))
         lprint('   FB transports / 10K fans (TTHR):%.4f   +/-%.4f' %
                (TTHR, TTHR_sigma))
         lprint('   Games per FB patient:           %2.4f  [%.4f, %.4f]' %
