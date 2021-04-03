@@ -32,11 +32,11 @@ neg_binom_params_file_name = os.path.join(data_dir, 'neg_binom.csv')
 pure_med_file_name = os.path.join(data_dir, 'pure_med_stats.csv')
 injuries_file_name = os.path.join(data_dir, 'injuries.csv')
 
-
 #####################
 # Utility functions #
 #####################
 results_fp = None
+skip_cache = False
 
 
 def lprint(x, suppress_stdout=False):
@@ -64,6 +64,11 @@ def prettyprint(func):
 def check_cache(file_name_list):
     if type(file_name_list) == str:
         file_name_list = [file_name_list]
+
+    if skip_cache:
+        lprint('Skipping file cache for %s' % (', '.join(file_name_list)))
+        return(False)
+
     lprint('Check if cached files exist: %s' % (', '.join(file_name_list)))
 
     for file_name in file_name_list:
@@ -96,7 +101,7 @@ def grab_teams():
 
 
 @prettyprint
-def parse_raw_excel(args):
+def parse_raw_excel(raw_medical_file_name=None):
     print('Parsing raw Excel medical data')
 
     # If we have previously parsed the raw excel data, just
@@ -105,13 +110,13 @@ def parse_raw_excel(args):
         return
 
     # Otherwise, extract the part of the Excel file we will use
-    if args.raw is None:
+    if raw_medical_file_name is None:
         raise ValueError('Must specify input Excel file with --raw')
-    if not os.path.exists(args.raw):
-        raise ValueError('Cannot find file %s' % args.raw)
+    if not os.path.exists(raw_medical_file_name):
+        raise ValueError('Cannot find file %s' % raw_medical_file_name)
 
     teams_df = grab_teams()
-    xls = pd.ExcelFile(args.raw)
+    xls = pd.ExcelFile(raw_medical_file_name)
     combined_df = pd.DataFrame()
     for index, row in teams_df.iterrows():
         with warnings.catch_warnings():
@@ -186,8 +191,7 @@ def grab_basic_game_stats():
 
 
 def grab_one_team_stats(team=None, first_year=None, last_year=None):
-    print('Downloading basic stats for %s for years %d-%d' % (
-        team, first_year, last_year))
+    lprint('====  %s  (%d-%d)  ====' % (team, first_year, last_year))
 
     for year in range(first_year, last_year+1):
         out_filename = os.path.join(data_dir, '%s_%d.shtml' % (team, year))
@@ -255,12 +259,13 @@ def grab_one_team_stats(team=None, first_year=None, last_year=None):
 
     # Attendance may have a few missing values.  Check that it's
     # not out of hand, and drop them.
+    df['Attendance'].values[df.Attendance.values == ''] = np.nan
     NaN_attendance = np.sum(df.Attendance.isna())
+    lprint('  Number of games missing attendance data: %d' % NaN_attendance)
     if NaN_attendance > 10:
         raise ValueError(
             'Suspiciously many null attendance entries! (%d of %d)' %
             (NaN_attendance, len(df)))
-    df['Attendance'].values[df.Attendance.values == ''] = np.nan
     df.dropna(axis='index', subset=['Attendance'], inplace=True)
     df['Attendance'] = df.Attendance.str.replace(',', '')
     df['Attendance'] = df['Attendance'].astype(int)
@@ -331,7 +336,6 @@ def grab_one_team_stats(team=None, first_year=None, last_year=None):
         df['fraction_of_season'].values[i] = frac
 
     df.reset_index(drop=True, inplace=True)
-    lprint('====  %s  (%d-%d)  ====' % (team, first_year, last_year))
     lprint('  Total home games: %d' % len(df))
     lprint('  Total home game attendance: %d' % (df.Attendance.sum()))
 
@@ -344,6 +348,9 @@ def merge_mlb_and_medical_data():
 
     if check_cache([merged_file_name, pure_med_file_name]):
         return
+
+    df_key = pd.read_csv(teams_file_name)
+    df_key.set_index('team', inplace=True)
 
     # First, aggregate medical data by day.  That essentially means
     # "by game", except in the case of double-headers (although
@@ -367,17 +374,38 @@ def merge_mlb_and_medical_data():
 
     # Next, clean up MLB data
     mlb_df = pd.read_csv(mlb_stats_file_name)
-    # Drop double-headers
-    mlb_df = mlb_df[~(mlb_df.double_header.values)].reset_index(drop=True)
+
     # Drop unlikely-to-be-used columns
     keep_columns = [
         'Year', 'Team', 'Win_loss_tie', 'Innings', 'Daytime', 'Attendance',
-        'epoch_second', 'game_length_minutes', 'fraction_of_season']
+        'epoch_second', 'game_length_minutes', 'fraction_of_season',
+        'double_header']
     mlb_df = mlb_df[keep_columns]
 
-    # Finally, join on game date.
+    # Join on game date.
     joint = ['Team', 'epoch_second']
     combined_df = mlb_df.merge(med_df, on=joint)
+
+    # Drop double-headers but record how much we're dropping
+    print('Filtering out double headers:')
+    print('  Team  #games = #singles +  #doubles   (#days w/double headers)')
+    for team, combo_team_df in combined_df.groupby(['Team']):
+        num_all_games = len(combo_team_df)
+        num_single_headers = np.sum(
+            ~(combo_team_df.double_header.values))
+        num_double_headers = np.sum(
+            combo_team_df.double_header.values)
+        num_double_header_dates = (
+            len(combo_team_df[combo_team_df.double_header.values
+                              ].epoch_second.unique()))
+        print('  %s   %3d      %3d        %3d         (%d)' % (
+            team, num_all_games, num_single_headers, num_double_headers,
+            num_double_header_dates))
+    single_header_index = ~(combined_df.double_header.values)
+    print('Reducing games from %d to %d' % (
+        len(combined_df), np.sum(single_header_index)))
+    combined_df = combined_df[single_header_index].reset_index(drop=True)
+    combined_df.drop(columns='double_header', inplace=True)
 
     # There should only be one match for each date; let's double-check.
     assert len(combined_df) == len(combined_df.groupby(joint).groups)
@@ -564,16 +592,15 @@ def estimate_missing_games():
         plt.savefig(file_name, dpi=400)
         plt.close()
 
-        # missing_summary_df = pd.DataFrame(
-        #     columns=['Team', 'missing_games', 'present_games',
-        #              'corrected_games', 'corrected_attendance',
-        #               'first_year', 'last_year', 'event_type'])
-
         corrected_estimate_of_total_games = neg_binom_fit[0] + len(team_df)
         corrected_estimate_of_total_attendance = (
             team_df.Attendance.sum() +
             (reweighted_missing_attendance_per_game *
                 neg_binom_fit[0]))
+        # missing_summary_df = pd.DataFrame(
+        #     columns=['Team', 'missing_games', 'present_games',
+        #              'corrected_games', 'corrected_attendance',
+        #               'first_year', 'last_year', 'event_type'])
         missing_summary_df.loc[len(missing_summary_df)] = (
             team,
             sum(game_count['missing'][team].values()),
@@ -744,6 +771,8 @@ def fit_glms():
 
 @prettyprint
 def summarize_data():
+    injuries_df = distribution_of_injuries()
+
     df_key = pd.read_csv(teams_file_name)
     df_key.set_index('team', inplace=True)
     merged_df = pd.read_csv(merged_file_name)
@@ -783,6 +812,9 @@ def summarize_data():
             missing_summary_df.present_games[team]))
         lprint('   Total attendance:               %d' % (
             missing_summary_df.present_attendance[team]))
+        lprint('   Mean fans/game:                 %d' % (
+            missing_summary_df.present_attendance[team] /
+            missing_summary_df.present_games[team]))
         lprint('   Total fans treated:             %d' % (
             len(pure_med_team_df)))
         lprint('   Total FB injuries:              %d' % (
@@ -827,15 +859,49 @@ def summarize_data():
             missing_summary_df.corrected_games[team]))
         lprint('   Corrected total attendance:     %d' % (
             missing_summary_df.corrected_attendance[team]))
-        lprint('   FB injuries per game (%s):      %.4f' % (
-            df_key.event_type[team],
-            ((merged_team_df.foul_ball_injuries.sum()) /
-                (missing_summary_df.corrected_games[team]))))
-        lprint('   FB injuries per 10K fans (%s):  %.4f' % (
-            df_key.event_type[team],
-            (10000.0 *
-                (merged_team_df.foul_ball_injuries.sum()) /
-                (missing_summary_df.corrected_attendance[team]))))
+        num_patients = merged_team_df.foul_ball_injuries.sum()
+        num_games = missing_summary_df.corrected_games[team]
+        num_fans = missing_summary_df.corrected_attendance[team]
+        PPG = num_patients / num_games
+        PPTT = 10000 * num_patients / num_fans
+
+        # Figure out transportation-to-hospital rate for FB victims
+        transport_row_vec = np.where(
+            (injuries_df.Category.values == 'Disposition') &
+            (injuries_df.Type.values == 'Transport to hospital'))
+        assert len(transport_row_vec) == 1
+        transport_row = injuries_df.loc[transport_row_vec[0]]
+        anon_team = 'FB %s %%' % (df_key.anonymized_name[team])
+        # Percentage => fraction
+        fb_transport_fraction = (1/100) * transport_row[anon_team].values[0]
+        # This should be an integer up to machine precision:
+        assert np.isclose(
+            fb_transport_fraction*num_patients,
+            np.rint(fb_transport_fraction*num_patients))
+
+        THG = fb_transport_fraction * PPG
+        TTHR = fb_transport_fraction * PPTT
+
+        # Variance from Poisson distribution.
+        PPG_sigma = np.sqrt(num_patients) / num_games
+        PPTT_sigma = 10000 * np.sqrt(num_patients) / num_fans
+        THG_sigma = np.sqrt(fb_transport_fraction) * PPG_sigma
+        TTHR_sigma = np.sqrt(fb_transport_fraction) * PPTT_sigma
+
+        lprint('Injury rates (+/- 1 sigma)')
+        lprint('   FB patients per game (PPG):     %.4f   +/-%.4f' %
+               (PPG, PPG_sigma))
+        lprint('   FB patients / 10K fans (PPTT):  %.4f   +/-%.4f' %
+               (PPTT, PPTT_sigma))
+        lprint('   FB transports per game (THG):   %.4f   +/-%.4f' %
+               (THG, THG_sigma))
+        lprint('   FB transports / 10K fans (TTHR):%.4f   +/-%.4f' %
+               (TTHR, TTHR_sigma))
+        lprint('   Games per FB patient:           %2.4f  [%.4f, %.4f]' %
+               (1/PPG, 1/(PPG+PPG_sigma), 1/(PPG-PPG_sigma)))
+        lprint('   Games per FB transport:         %2.4f  [%.4f, %.4f]' %
+               (1/THG, 1/(THG+THG_sigma), 1/(THG-THG_sigma)))
+        lprint('')
 
         lprint('Coefficients of maximum-likelihood fit of negative binomial '
                'distribution:')
@@ -843,7 +909,14 @@ def summarize_data():
                (neg_binom_df.r[team], neg_binom_df.p[team]))
     lprint('\n')
 
-    # Next, extract the distribution of characteristics about the injuries.
+    # Now, print out counts of all the disposition, diagnoses, etc as a
+    # dataframe.
+    with pd.option_context('display.float_format', '{:0.2f}'.format):
+        lprint(injuries_df.to_string())
+
+
+def distribution_of_injuries():
+    # Extract the distribution of characteristics about the injuries.
     # E.g., 69% of FB injuries involve contusions, but only 6% of injuries
     # in general do.
     #
@@ -855,6 +928,10 @@ def summarize_data():
     # Treatments
     # Level of Care
     # Disposition
+
+    df_key = pd.read_csv(teams_file_name)
+    df_key.set_index('team', inplace=True)
+    pure_med_df = pd.read_csv(pure_med_file_name)
 
     C = {}
     # "category_list" is used *after* we have renamed some of the columns
@@ -910,7 +987,8 @@ def summarize_data():
             relabel['Level of Care'] = [
                 ('Not listed', 'Not listed or none'),
                 ('None', 'Not listed or none'),
-                ('Minor (band-aid + simple analgesic; tampon etc..)', 'Minor')]
+                ('Minor (band-aid + simple analgesic; tampon etc..)', 'Minor'),
+                ('Als', 'ALS'), ('Bls', 'BLS')]
             relabel['Disposition'] = [
                 ('Med attn later (return to event, f/u later)',
                     'Med attn later'),
@@ -1007,9 +1085,8 @@ def summarize_data():
                     N = sum(C[team][p][c].values())
                     injuries_df.loc[row, cc_perc] = 100.0 * x / N
 
-    with pd.option_context('display.float_format', '{:0.2f}'.format):
-        lprint(injuries_df.to_string())
     injuries_df.to_csv(injuries_file_name, index=False)
+    return(injuries_df)
 
 
 if __name__ == '__main__':
@@ -1018,9 +1095,16 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--raw', help='Excel file with raw medical diagnostic info')
-    args = parser.parse_args()
+    parser.add_argument(
+        '--all', action='store_true', default=False, dest='skip_cache',
+        help='Typically, the code tries to cache results of previous '
+        'calculations and reuse them.  With the "--all" flag, it reprocesses '
+        'everything.  Note that SHTML downloads will still be cached.')
 
-    parse_raw_excel(args)
+    args = parser.parse_args()
+    skip_cache = args.skip_cache
+
+    parse_raw_excel(raw_medical_file_name=args.raw)
     grab_basic_game_stats()
     merge_mlb_and_medical_data()
     estimate_missing_games()

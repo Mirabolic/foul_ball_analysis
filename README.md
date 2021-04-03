@@ -78,7 +78,7 @@ This is accomplished by writing a master file `data/teams.csv`.  The file has a 
 * `team_full_name`: The full name of the baseball team.  This field is only included to make the CSV file slightly more readable.
 * `excel_sheet_name`: The name of the Worksheet in the Excel file corresponding to the team.
 * `anonymized_name`: We anonymize the team names for the paper; provide the anonymized name here.  We used "MLB #1" and "MLB #2".
-* `event_type`: Was the medical event a patient presentation ("PP") or a hospital tranportation ("TH")?
+* `event_type`: What type of medical event are we observing? All the events for our data were patient presentations, so we set this to "PP" for both teams; however, we allow for other possibilities.
 
 Note that if the data from a single team is spread across multiple Excel worksheets, use multiple rows in this file to specify all the data.
 
@@ -90,7 +90,11 @@ Now that you have provided the two files above (`data/teams.csv` and, for exampl
 ```
 ./scrape_and_analyze --raw raw_medical.xlsx
 ```
-The script will attempt to reuse information from previous runs.  For example, after it scrapes the website, it will cache the results and avoid re-downloading the files.  If, for some reason, you wish to rerun everything from scratch, you can do something like:
+The script will attempt to reuse information from previous runs.  For example, after it scrapes the website, it will cache the results and avoid re-downloading the files.  If you'd like to run every function in order to reproduce all the output and figures and so forth, run:
+```
+./scrape_and_analyze --raw raw_medical.xlsx --all
+```
+If, for some reason, you wish to rerun **everything** from scratch, you can do something like:
 ```
 cp data/teams.csv .   # Save the "teams.csv" file; you'll still need that
 rm data/*.csv data/*.shtml data/results.txt   # Clobber everything else
