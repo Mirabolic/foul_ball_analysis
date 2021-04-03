@@ -740,6 +740,10 @@ def fit_glms():
         df.drop(columns=['Team', 'foul_ball_injuries',
                          'non_foul_ball_injuries'],
                 inplace=True)
+        all_features = list(df.columns)
+        # Log-attendance is interesting for a few reasons
+        df['log_Attendance'] = np.log(df['Attendance'])
+
         # Standardize
         df = (df - df.mean())/df.std()
         # We need to add a constant term to the dataframe for the
@@ -751,7 +755,7 @@ def fit_glms():
         #  game_length_minutes  fraction_of_season constant win
 
         # Include all features and no features...
-        experiment_list = [df.columns, ['constant']]
+        experiment_list = [all_features+['constant'], ['constant']]
         # Add some favorites:
         experiment_list.append(['Year', 'game_length_minutes', 'constant'])
         # Include each feature individually...
