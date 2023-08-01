@@ -33,7 +33,7 @@ def zero_censored_nllh(r=None, p=None, data=None):
     # of the censored distribution.
 
     if len(data) == 0:
-        return(0.0)
+        return 0.0
 
     # Check that data has no zeroes.
     assert np.sum(data == 0) == 0
@@ -42,14 +42,14 @@ def zero_censored_nllh(r=None, p=None, data=None):
     nb_prob = nbinom_values(r=r, p=p, N=MM)
     censored_prob = nb_prob.copy()
     assert censored_prob[0] < 1
-    censored_prob /= 1-censored_prob[0]
+    censored_prob /= 1 - censored_prob[0]
     neg_log_censored_prob = -np.log(censored_prob)
     censored_prob[0] = 0
     neg_log_censored_prob[0] = np.inf
     nllh = 0.0
     for d, num_d in zip(*(np.unique(data, return_counts=True))):
         nllh += num_d * neg_log_censored_prob[d]
-    return(nllh)
+    return nllh
 
 
 def nbinom_values(r=None, p=None, N=None):
@@ -58,10 +58,10 @@ def nbinom_values(r=None, p=None, N=None):
     assert p < 1
     if N is None:
         # Default domain: up to 2*mean
-        N = int(2*(1-p)*r/p) + 1
+        N = int(2 * (1 - p) * r / p) + 1
     domain = np.arange(N)
-    values = binom(domain+r-1, r-1) * np.power(1-p, domain) * np.power(p, r)
-    return(values)
+    values = binom(domain + r - 1, r - 1) * np.power(1 - p, domain) * np.power(p, r)
+    return values
 
 
 def log_likelihood(params, *args):
@@ -72,13 +72,16 @@ def log_likelihood(params, *args):
 
     # MLE estimate based on the formula on Wikipedia:
     # http://en.wikipedia.org/wiki/Negative_binomial_distribution#Maximum_likelihood_estimation
-    result = np.sum(gammaln(X + r)) \
-        - np.sum(np.log(factorial(X))) \
-        - N * (gammaln(r)) \
-        + N * r * np.log(p) \
+    result = (
+        np.sum(gammaln(X + r))
+        - np.sum(np.log(factorial(X)))
+        - N * (gammaln(r))
+        + N * r * np.log(p)
         + np.sum(X * np.log(1 - (p if p < 1 else 1 - infinitesimal)))
+    )
 
     return -result
+
 
 # X is a numpy array representing the data
 # initial params is a numpy array representing the initial values of
@@ -95,11 +98,13 @@ def nbinom_fit(X, initial_params=None):
 
         # MLE estimate based on the formula on Wikipedia:
         # http://en.wikipedia.org/wiki/Negative_binomial_distribution#Maximum_likelihood_estimation
-        result = np.sum(gammaln(X + r)) \
-            - np.sum(np.log(factorial(X))) \
-            - N * (gammaln(r)) \
-            + N * r * np.log(p) \
+        result = (
+            np.sum(gammaln(X + r))
+            - np.sum(np.log(factorial(X)))
+            - N * (gammaln(r))
+            + N * r * np.log(p)
             + np.sum(X * np.log(1 - (p if p < 1 else 1 - infinitesimal)))
+        )
 
         return -result
 
@@ -108,11 +113,8 @@ def nbinom_fit(X, initial_params=None):
         X = args[0]
         N = X.size
 
-        pderiv = (N * r) / p - np.sum(X) / \
-            (1 - (p if p < 1 else 1 - infinitesimal))
-        rderiv = np.sum(psi(X + r)) \
-            - N * psi(r) \
-            + N * np.log(p)
+        pderiv = (N * r) / p - np.sum(X) / (1 - (p if p < 1 else 1 - infinitesimal))
+        rderiv = np.sum(psi(X + r)) - N * psi(r) + N * np.log(p)
 
         return np.array([-rderiv, -pderiv])
 
@@ -120,7 +122,7 @@ def nbinom_fit(X, initial_params=None):
         # reasonable initial values (from fitdistr function in R)
         m = np.mean(X)
         v = np.var(X)
-        size = (m**2) / (v - m) if v > m else 10
+        size = (m ** 2) / (v - m) if v > m else 10
 
         # convert mu/size parameterization to prob/size
         p0 = size / ((size + m) if size + m != 0 else 1)
@@ -128,12 +130,14 @@ def nbinom_fit(X, initial_params=None):
         initial_params = np.array([r0, p0])
 
     bounds = [(infinitesimal, None), (infinitesimal, 1)]
-    optimres = optim(log_likelihood,
-                     x0=initial_params,
-                     # fprime=log_likelihood_deriv,
-                     args=(X,),
-                     approx_grad=1,
-                     bounds=bounds)
+    optimres = optim(
+        log_likelihood,
+        x0=initial_params,
+        # fprime=log_likelihood_deriv,
+        args=(X,),
+        approx_grad=1,
+        bounds=bounds,
+    )
 
     params = optimres[0]
-    return {'size': params[0], 'prob': params[1]}
+    return {"size": params[0], "prob": params[1]}

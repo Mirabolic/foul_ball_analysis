@@ -1,5 +1,5 @@
 # Foul Ball Analysis
-In the forthcoming paper "Foul Ball Rates and Injuries at Major League Baseball Games" by Milsten et al., the authors collected injury data from first aid stations and ambulance run sheets at MLB stadiums to estimate the risk of foul ball injury.  This repository contains the corresponding tools used for web scraping, data cleaning and statistical analysis.  We have elected to share the code publicly to facilitate transparency and reproducibility of the analysis.
+In ["Foul Ball Rates and Injuries at Major League Baseball Games"](https://pubmed.ncbi.nlm.nih.gov/35274606/) by Milsten et al., 2022, the authors collected injury data from first aid stations and ambulance run sheets at MLB stadiums to estimate the risk of foul ball injury.  This repository contains the corresponding tools used for web scraping, data cleaning and statistical analysis.  We have elected to share the code publicly to facilitate transparency and reproducibility of the analysis.
 
 The software development and statistical analyses were performed during 2019-2021 by [Bill Bradley](https://www.linkedin.com/in/bill-bradley-a1614314/) in consultation with [Andrew Milsten](https://www.umassmed.edu/emed/faculty-old/milsten/) and [Karl Knaub](https://www.linkedin.com/in/karl-knaub-ab10701/).
 
